@@ -1,6 +1,5 @@
 import streamlit as st
 import google.generativeai as genai
-from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -17,8 +16,9 @@ footer {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-st.title("✨ محتوى برو: مخطط المقال فائق السرعة")
-st.write("أدخل كلمتك المفتاحية، ودع الذكاء الاصطناعي يحلل **هياكل** أفضل المنافسين ويبني لك مخطط مقال يتفوق عليهم.")
+st.title("✨ محتوى برو: محلل الروابط الاستراتيجي")
+st.write(
+    "اذهب إلى جوجل، ابحث عن كلمتك المفتاحية، ثم الصق هنا روابط أفضل 3-5 مقالات منافسة لبناء مخطط مقال يتفوق عليهم.")
 
 # --- إعدادات واجهة برمجة التطبيقات (API) ---
 try:
@@ -31,51 +31,32 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # --- الدوال الأساسية ---
 
-@st.cache_data(ttl=3600)  # تخزين النتائج لمدة ساعة لتسريع التجارب المتكررة
-def get_competitor_links(keyword, num_results=5):
-    """
-    تبحث عن الكلمة المفتاحية باستخدام DDGS مع حيل لتحسين النتائج العربية.
-    """
-    links = []
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-    }
-    try:
-        with DDGS(headers=headers, timeout=20) as ddgs:
-            results = list(ddgs.text(keywords=keyword, region='eg-ar', safesearch='off', max_results=num_results))
-            if results:
-                links = [r['href'] for r in results]
-    except Exception as e:
-        st.error(f"حدث خطأ أثناء البحث: {e}")
-    return links
-
-
 @st.cache_data(ttl=3600)
 def scrape_headings_only(url):
     """
-    (القلب الجديد للأداة)
     يستخلص عناوين H2 و H3 فقط من رابط المقال باستخدام BeautifulSoup.
     """
     try:
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
         response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
         headings = []
-        # البحث عن كل وسوم h2 و h3
         for heading in soup.find_all(['h2', 'h3']):
-            # إضافة ## أو ### بناءً على نوع الوسم
             prefix = "##" if heading.name == 'h2' else "###"
             headings.append(f"{prefix} {heading.get_text(strip=True)}")
 
         return "\n".join(headings)
-    except Exception:
+    except Exception as e:
+        st.warning(f"فشل تحليل الرابط: {url} - السبب: {e}")
         return None
 
 
-def generate_ultimate_outline_from_headings(keyword, competitor_headings):
+def generate_ultimate_outline_from_headings(competitor_headings):
     """
-    (البرومبت الجديد)
     ينشئ مخطط المقال الشامل بناءً على هياكل المنافسين.
     """
     content_prompt_part = ""
@@ -84,8 +65,7 @@ def generate_ultimate_outline_from_headings(keyword, competitor_headings):
 
     prompt = f"""
     أنت خبير استراتيجي في تحسين محركات البحث (SEO) متخصص في تحليل المحتوى.
-    الكلمة المفتاحية المستهدفة هي: "{keyword}"
-    لقد قمت بتحليل **هياكل المقالات (قوائم العناوين H2 و H3)** لأفضل المنافسين، وهذه هي:
+    لقد قمت بتحليل **هياكل المقالات (قوائم العناوين H2 و H3)** التي قدمها المستخدم، وهذه هي:
     {content_prompt_part}
     مهمتك الآن هي القيام بما يلي:
     1.  **تحليل الهياكل:** حدد الأنماط والنقاط المشتركة التي يغطيها كل المنافسين في عناوينهم الرئيسية (H2s).
@@ -122,46 +102,47 @@ def display_expandable_outline(outline):
             for line in lines[1:]:
                 if line.strip().startswith('###'):
                     h3_title = line.strip('# ').strip()
-                    st.markdown(f'<h3 style="color: #555555; font-size: 1.1em; margin-left: 20px;">- {h3_title}</h3>',
+                    # --- هذا هو السطر الذي تم تعديله ---
+                    st.markdown(f'<h3 style="color: #FFFFFF; font-size: 1.1em; margin-left: 20px;">- {h3_title}</h3>',
                                 unsafe_allow_html=True)
                 elif line.strip():
                     st.markdown(f'<p style="margin-left: 20px;">{line.strip()}</p>', unsafe_allow_html=True)
 
 
 # --- واجهة المستخدم الرئيسية ---
-keyword = st.text_input("أدخل الكلمة المفتاحية الأساسية هنا:", placeholder="مثال: أفضل طرق التسويق الرقمي")
+links_input = st.text_area(
+    "الصق هنا روابط المقالات المنافسة (كل رابط في سطر منفصل)",
+    height=150,
+    placeholder="مثال:\nhttps://www.example.com/article-1\nhttps://www.another.com/blog-post-2\n..."
+)
 
-if st.button("🚀 حلل هياكل المنافسين وابنِ المخطط", type="primary"):
-    if not keyword:
-        st.warning("يرجى إدخال كلمة مفتاحية أولاً.")
+if st.button("🚀 حلل الروابط وابنِ المخطط", type="primary"):
+    links = [link.strip() for link in links_input.split('\n') if link.strip()]
+
+    if not links:
+        st.warning("يرجى لصق رابط واحد على الأقل.")
     elif not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_API_KEY":
         st.error("يرجى وضع مفتاح Google AI API الصحيح في الكود أولاً.")
     else:
-        with st.spinner("الخطوة 1/3: البحث عن أفضل المنافسين..."):
-            links = get_competitor_links(keyword, num_results=5)
+        st.info(f"تم العثور على {len(links)} روابط. جاري تحليل هياكلها...")
 
-        if not links:
-            st.error("لم يتم العثور على منافسين. حاول استخدام كلمة مفتاحية مختلفة.")
+        competitor_headings = []
+        with st.spinner("الخطوة 1/2: استخلاص هياكل العناوين (H2, H3)..."):
+            for link in links:
+                headings = scrape_headings_only(link)
+                if headings:
+                    competitor_headings.append(headings)
+
+        if not competitor_headings:
+            st.error("فشل استخلاص هياكل العناوين من الروابط المقدمة. تأكد من أن الروابط صحيحة وقابلة للتحليل.")
         else:
-            st.info(f"تم العثور على {len(links)} منافسين. جاري تحليل هياكلهم...")
+            with st.spinner("الخطوة 2/2: العقل الاستراتيجي (Gemini) يبني الهيكل الشامل..."):
+                ultimate_outline = generate_ultimate_outline_from_headings(competitor_headings)
 
-            competitor_headings = []
-            with st.spinner("الخطوة 2/3: استخلاص هياكل العناوين (H2, H3)... (فائق السرعة!)"):
-                for link in links[:3]:
-                    headings = scrape_headings_only(link)
-                    if headings:
-                        competitor_headings.append(headings)
+            st.success("🎉 تم بناء الهيكل الشامل بنجاح!")
+            st.markdown("---")
 
-            if not competitor_headings:
-                st.error("فشل استخلاص هياكل العناوين من المنافسين.")
+            if ultimate_outline:
+                display_expandable_outline(ultimate_outline)
             else:
-                with st.spinner("الخطوة 3/3: العقل الاستراتيجي (Gemini) يبني الهيكل الشامل..."):
-                    ultimate_outline = generate_ultimate_outline_from_headings(keyword, competitor_headings)
-
-                st.success("🎉 تم بناء الهيكل الشامل بنجاح!")
-                st.markdown("---")
-
-                if ultimate_outline:
-                    display_expandable_outline(ultimate_outline)
-                else:
-                    st.error("فشل إنشاء الهيكل.")
+                st.error("فشل إنشاء الهيكل.")
